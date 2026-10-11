@@ -1,0 +1,394 @@
+TERMINAL LOG - Bài 4, Session 10: Custom Network và Named Volume bằng Docker CLI
+Môi trường: Windows 11, Docker Desktop (engine Linux), Git Bash. Toàn bộ output bên dưới là output thật.
+
+##################################################################
+# PHẦN 1: Môi trường và kiểm tra cú pháp script
+##################################################################
+$ docker version --format "Client {{.Client.Version}} / Server {{.Server.Version}} ({{.Server.Os}})"
+Client 29.7.2 / Server 29.7.2 (linux)
+$ docker pull postgres:15-alpine
+15-alpine: Pulling from library/postgres
+Digest: sha256:f7d23353e1b15400d22ebe31189f4d314b87a4c129cc400c8c2d8d4ca127bf81
+Status: Image is up to date for postgres:15-alpine
+docker.io/library/postgres:15-alpine
+$ docker pull python:3.12-alpine
+3.12-alpine: Pulling from library/python
+Digest: sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4
+Status: Image is up to date for python:3.12-alpine
+docker.io/library/python:3.12-alpine
+$ bash -n commands.sh && echo "bash -n: OK"
+bash -n: OK
+
+##################################################################
+# PHẦN 2: Chạy kịch bản chính (bash commands.sh 2>&1 | tee run.log)
+##################################################################
+$ bash commands.sh 2>&1 | tee run.log
+
+==================================================================
+Bước 1: Tạo Custom Bridge Network và Named Volume
+==================================================================
+$ docker network create --driver bridge app-net
+19b4ebb479f561c47aeb594aa17418a77861c5c259a89e45ef3b772a0ca40880
+$ docker volume create db-data
+db-data
+
+==================================================================
+Bước 2: Khởi chạy Database Container (postgres:15-alpine)
+==================================================================
+$ docker run -d --name db-server --network app-net -e POSTGRES_DB=appdb -e POSTGRES_USER=appuser -e POSTGRES_PASSWORD=AppUser_2026 -v db-data:/var/lib/postgresql/data postgres:15-alpine
+4c7d556e3c18e66156dc2ec555ad8d678d88b194f0cb67aac02d186250c66bc6
+Chờ PostgreSQL sẵn sàng ...
+$ docker exec db-server pg_isready -h 127.0.0.1 -U appuser -d appdb
+127.0.0.1:5432 - accepting connections
+(sẵn sàng sau 3 lần thử)
+
+==================================================================
+Bước 3: Build và khởi chạy Backend Container
+==================================================================
+$ docker build -t backend-api:1.0 ./backend
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 173B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/python:3.12-alpine
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [internal] load build context
+#4 transferring context: 28B done
+#4 DONE 0.0s
+
+#5 [1/4] FROM docker.io/library/python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4
+#5 resolve docker.io/library/python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4 0.0s done
+#5 DONE 0.0s
+
+#6 [2/4] WORKDIR /app
+#6 CACHED
+
+#7 [3/4] RUN pip install --no-cache-dir pg8000==1.31.2
+#7 CACHED
+
+#8 [4/4] COPY app.py .
+#8 CACHED
+
+#9 exporting to image
+#9 exporting layers done
+#9 exporting manifest sha256:8a7924aeb63aab4a826b302f0734b83d5fe0cdd0b93e2662739b20e799dfe0e7 done
+#9 exporting config sha256:155e1544804d966a28cb82408cc4c1e893b54ea605c0736d71b81033a23fb617 done
+#9 exporting attestation manifest sha256:04060dc44409d38c924ca61157ccea681638b8088f2ae4ebbdaa4655747e0e6d
+#9 exporting attestation manifest sha256:04060dc44409d38c924ca61157ccea681638b8088f2ae4ebbdaa4655747e0e6d 0.0s done
+#9 exporting manifest list sha256:1b03ec422c92c0ee1d1d47440d11b08b87a1ddf2e21ce1a819d96cdb7ce1cdd1 0.0s done
+#9 naming to docker.io/library/backend-api:1.0 done
+#9 unpacking to docker.io/library/backend-api:1.0 0.0s done
+#9 DONE 0.1s
+
+View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/xy9l8no9uxkdonwk4eet8g2ag
+$ docker run -d --name app-container --network app-net -p 8084:8080 -e DB_HOST=db-server -e DB_PORT=5432 -e DB_NAME=appdb -e DB_USER=appuser -e DB_PASSWORD=AppUser_2026 backend-api:1.0
+c87688bf8daf757e3ca57e2edf79e9aa41801559bc8e00fe1acd21f901ff18a8
+Chờ backend kết nối được database ...
+$ curl -s http://localhost:8084/health
+{"status":"UP","db_host":"db-server","db":"connected"}
+(sẵn sàng sau 2 lần thử)
+
+==================================================================
+Bước 4: Kiểm tra network, volume và DNS nội bộ
+==================================================================
+$ docker network ls | grep app-net
+19b4ebb479f5   app-net                         bridge    local
+$ docker volume ls | grep db-data
+local     db-data
+$ docker network inspect app-net
+[
+    {
+        "Name": "app-net",
+        "Id": "19b4ebb479f561c47aeb594aa17418a77861c5c259a89e45ef3b772a0ca40880",
+        "Created": "2026-10-11T21:13:02.517526175Z",
+        "Scope": "local",
+        "Driver": "bridge",
+        "EnableIPv4": true,
+        "EnableIPv6": false,
+        "IPAM": {
+            "Driver": "default",
+            "Options": {},
+            "Config": [
+                {
+                    "Subnet": "172.20.0.0/16",
+                    "Gateway": "172.20.0.1"
+                }
+            ]
+        },
+        "Internal": false,
+        "Attachable": false,
+        "Ingress": false,
+        "ConfigFrom": {
+            "Network": ""
+        },
+        "ConfigOnly": false,
+        "Options": {
+            "com.docker.network.enable_ipv4": "true",
+            "com.docker.network.enable_ipv6": "false"
+        },
+        "Labels": {},
+        "Containers": {
+            "4c7d556e3c18e66156dc2ec555ad8d678d88b194f0cb67aac02d186250c66bc6": {
+                "Name": "db-server",
+                "EndpointID": "9c8547d69f618ff38ec82b72ff347a2112bf5c067cff8b17ef89969751dad066",
+                "MacAddress": "ea:d5:c9:01:1c:68",
+                "IPv4Address": "172.20.0.2/16",
+                "IPv6Address": ""
+            },
+            "c87688bf8daf757e3ca57e2edf79e9aa41801559bc8e00fe1acd21f901ff18a8": {
+                "Name": "app-container",
+                "EndpointID": "a1d51300d5210720c15a33a36fe6d1e6b4f67db55984c7c70e0c95a45842d533",
+                "MacAddress": "52:4c:29:45:47:d2",
+                "IPv4Address": "172.20.0.3/16",
+                "IPv6Address": ""
+            }
+        },
+        "Status": {
+            "IPAM": {
+                "Subnets": {
+                    "172.20.0.0/16": {
+                        "IPsInUse": 5,
+                        "DynamicIPsAvailable": 65531
+                    }
+                }
+            }
+        }
+    }
+]
+$ docker exec app-container ping -c 2 db-server
+PING db-server (172.20.0.2): 56 data bytes
+64 bytes from 172.20.0.2: seq=0 ttl=64 time=0.110 ms
+64 bytes from 172.20.0.2: seq=1 ttl=64 time=0.180 ms
+
+--- db-server ping statistics ---
+2 packets transmitted, 2 packets received, 0% packet loss
+round-trip min/avg/max = 0.110/0.145/0.180 ms
+$ docker exec app-container getent hosts db-server
+172.20.0.2        db-server  db-server
+$ docker exec db-server hostname -i
+172.20.0.2
+
+==================================================================
+Bước 5: Thêm dữ liệu qua Backend API
+==================================================================
+$ curl -s -X POST http://localhost:8084/notes -H 'Content-Type: application/json' -d '{"content":"Ban ghi 1 - truoc khi xoa container DB"}'
+{"id":1,"content":"Ban ghi 1 - truoc khi xoa container DB"}
+$ curl -s -X POST http://localhost:8084/notes -H 'Content-Type: application/json' -d '{"content":"Ban ghi 2 - truoc khi xoa container DB"}'
+{"id":2,"content":"Ban ghi 2 - truoc khi xoa container DB"}
+$ curl -s http://localhost:8084/notes
+[{"id":1,"content":"Ban ghi 1 - truoc khi xoa container DB","created_at":"2026-10-11 21:13:12.320816+00:00"},{"id":2,"content":"Ban ghi 2 - truoc khi xoa container DB","created_at":"2026-10-11 21:13:12.541340+00:00"}]
+Đối chiếu trực tiếp trong database:
+$ docker exec db-server psql -U appuser -d appdb -c 'SELECT * FROM notes;'
+ id |                content                 |          created_at           
+----+----------------------------------------+-------------------------------
+  1 | Ban ghi 1 - truoc khi xoa container DB | 2026-10-11 21:13:12.320816+00
+  2 | Ban ghi 2 - truoc khi xoa container DB | 2026-10-11 21:13:12.54134+00
+(2 rows)
+
+
+==================================================================
+Bước 6: Test Data Persistence (xóa cứng container DB, tạo lại cùng volume)
+==================================================================
+--- 6.1 Xóa cứng container DB ---
+$ docker rm -f db-server
+db-server
+$ docker ps -a --filter name=db-server
+CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
+--- 6.2 Volume vẫn còn ---
+$ docker volume inspect db-data
+[
+    {
+        "CreatedAt": "2026-10-11T21:13:02Z",
+        "Driver": "local",
+        "Labels": null,
+        "Mountpoint": "/var/lib/docker/volumes/db-data/_data",
+        "Name": "db-data",
+        "Options": null,
+        "Scope": "local"
+    }
+]
+--- 6.3 Backend mất kết nối DB ---
+$ curl -s http://localhost:8084/health
+{"status":"UP","db_host":"db-server","db":"error: Can't create a connection to host db-server and port 5432 (timeout is 5 and source_address is None)."}
+--- 6.4 Tạo lại container DB mới gắn cùng volume (không truyền POSTGRES_*) ---
+$ docker run -d --name db-server --network app-net -v db-data:/var/lib/postgresql/data postgres:15-alpine
+6aa5ae7ed5eec8eaca4a57f9e5d6af483bebb95fd04b5de9a71850f1bb43e6fa
+Chờ PostgreSQL sẵn sàng ...
+$ docker exec db-server pg_isready -h 127.0.0.1 -U appuser -d appdb
+127.0.0.1:5432 - accepting connections
+(sẵn sàng sau 2 lần thử)
+--- 6.5 Log khởi động của container DB mới ---
+$ docker logs db-server 2>&1 | grep -i 'skipping initialization'
+PostgreSQL Database directory appears to contain a database; Skipping initialization
+$ docker logs db-server 2>&1 | grep -iE 'not properly shut down|automatic recovery|ready to accept connections'
+2026-10-11 21:13:20.120 UTC [29] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-10-11 21:13:20.174 UTC [1] LOG:  database system is ready to accept connections
+--- 6.6 Xác minh dữ liệu còn nguyên ---
+$ curl -s http://localhost:8084/notes
+[{"id":1,"content":"Ban ghi 1 - truoc khi xoa container DB","created_at":"2026-10-11 21:13:12.320816+00:00"},{"id":2,"content":"Ban ghi 2 - truoc khi xoa container DB","created_at":"2026-10-11 21:13:12.541340+00:00"}]
+$ docker exec db-server psql -U appuser -d appdb -c 'SELECT * FROM notes;'
+ id |                content                 |          created_at           
+----+----------------------------------------+-------------------------------
+  1 | Ban ghi 1 - truoc khi xoa container DB | 2026-10-11 21:13:12.320816+00
+  2 | Ban ghi 2 - truoc khi xoa container DB | 2026-10-11 21:13:12.54134+00
+(2 rows)
+
+--- 6.7 Thêm bản ghi 3: sequence id tiếp tục, không quay về 1 ---
+$ curl -s -X POST http://localhost:8084/notes -H 'Content-Type: application/json' -d '{"content":"Ban ghi 3 - sau khi tao lai container DB"}'
+{"id":34,"content":"Ban ghi 3 - sau khi tao lai container DB"}
+$ docker exec db-server psql -U appuser -d appdb -c 'SELECT * FROM notes;'
+ id |                 content                  |          created_at           
+----+------------------------------------------+-------------------------------
+  1 | Ban ghi 1 - truoc khi xoa container DB   | 2026-10-11 21:13:12.320816+00
+  2 | Ban ghi 2 - truoc khi xoa container DB   | 2026-10-11 21:13:12.54134+00
+ 34 | Ban ghi 3 - sau khi tao lai container DB | 2026-10-11 21:13:22.46469+00
+(3 rows)
+
+
+==================================================================
+Bước 7: Tóm tắt kết quả
+==================================================================
+Network       : app-net (bridge)
+Volume        : db-data -> /var/lib/postgresql/data
+db-server     : 172.20.0.2
+app-container : 172.20.0.3
+Số bản ghi trong bảng notes sau khi tạo lại container DB:
+3
+Kết luận: dữ liệu được giữ nguyên nhờ Named Volume; backend gọi DB bằng hostname 'db-server'.
+Dọn dẹp: bash commands.sh cleanup
+
+##################################################################
+# PHẦN 3: Các lệnh kiểm tra gõ thêm khi hệ thống đang chạy
+# (lệnh đề dùng 'docker exec -it' khi gõ tay trên terminal có TTY;
+#  chạy không tương tác thì dùng 'docker exec' không có -it)
+##################################################################
+--- Trạng thái các container ---
+$ docker ps --filter name=db-server --filter name=app-container --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+NAMES           IMAGE                STATUS          PORTS
+db-server       postgres:15-alpine   Up 20 seconds   5432/tcp
+app-container   backend-api:1.0      Up 32 seconds   0.0.0.0:8084->8080/tcp, [::]:8084->8080/tcp
+--- 4 lệnh kiểm tra của đề ---
+$ docker network ls | grep app-net
+19b4ebb479f5   app-net                         bridge    local
+$ docker volume ls | grep db-data
+local     db-data
+$ docker exec -it app-container ping -c 2 db-server
+cannot attach stdin to a TTY-enabled container because stdin is not a terminal
+(exit code 1)
+$ docker exec app-container ping -c 2 db-server
+PING db-server (172.20.0.2): 56 data bytes
+64 bytes from 172.20.0.2: seq=0 ttl=64 time=0.087 ms
+64 bytes from 172.20.0.2: seq=1 ttl=64 time=0.079 ms
+
+--- db-server ping statistics ---
+2 packets transmitted, 2 packets received, 0% packet loss
+round-trip min/avg/max = 0.079/0.083/0.087 ms
+--- IP của hai container theo docker inspect ---
+$ docker inspect db-server --format '{{(index .NetworkSettings.Networks "app-net").IPAddress}}'
+172.20.0.2
+$ docker inspect app-container --format '{{(index .NetworkSettings.Networks "app-net").IPAddress}}'
+172.20.0.3
+$ docker network inspect app-net --format '{{range .Containers}}{{.Name}} {{.IPv4Address}}{{"\n"}}{{end}}'
+db-server 172.20.0.2/16
+app-container 172.20.0.3/16
+
+--- Biến môi trường backend và mount của DB ---
+$ docker exec app-container env | grep ^DB_
+DB_USER=appuser
+DB_PASSWORD=AppUser_2026
+DB_HOST=db-server
+DB_PORT=5432
+DB_NAME=appdb
+$ docker inspect db-server --format '{{json .Mounts}}'
+[{"Type":"volume","Name":"db-data","Source":"/var/lib/docker/volumes/db-data/_data","Destination":"/var/lib/postgresql/data","Driver":"local","Mode":"z","RW":true,"Propagation":""}]
+$ docker exec db-server ls /var/lib/postgresql/data
+PG_VERSION
+base
+global
+pg_commit_ts
+pg_dynshmem
+pg_hba.conf
+pg_ident.conf
+pg_logical
+pg_multixact
+pg_notify
+pg_replslot
+pg_serial
+pg_snapshots
+pg_stat
+pg_stat_tmp
+pg_subtrans
+pg_tblspc
+pg_twophase
+pg_wal
+pg_xact
+postgresql.auto.conf
+postgresql.conf
+postmaster.opts
+postmaster.pid
+--- Hậu quả của SIGKILL: sequence nhảy trước 32 giá trị ---
+$ docker exec db-server psql -U appuser -d appdb -c 'SELECT last_value, is_called FROM notes_id_seq;'
+ last_value | is_called 
+------------+-----------
+         34 | t
+(1 row)
+
+--- Volume đang được dùng thì không xóa được ---
+$ docker volume rm db-data
+Error response from daemon: remove db-data: volume is in use - [6aa5ae7ed5eec8eaca4a57f9e5d6af483bebb95fd04b5de9a71850f1bb43e6fa]
+(exit code 1)
+--- Log của backend (20 dòng cuối) ---
+$ docker logs --tail 20 app-container
+Da ket noi duoc database db-server:5432 (lan thu 1)
+Backend dang lang nghe tai 0.0.0.0:8080, DB_HOST=db-server
+172.20.0.1 - GET /health -> "GET /health HTTP/1.1" 200 -
+172.20.0.1 - GET /health -> "GET /health HTTP/1.1" 200 -
+172.20.0.1 - POST /notes -> "POST /notes HTTP/1.1" 201 -
+172.20.0.1 - POST /notes -> "POST /notes HTTP/1.1" 201 -
+172.20.0.1 - GET /notes -> "GET /notes HTTP/1.1" 200 -
+172.20.0.1 - GET /health -> "GET /health HTTP/1.1" 200 -
+172.20.0.1 - GET /notes -> "GET /notes HTTP/1.1" 200 -
+172.20.0.1 - POST /notes -> "POST /notes HTTP/1.1" 201 -
+
+##################################################################
+# PHẦN 4: Dọn dẹp (bash commands.sh cleanup) và xác nhận
+##################################################################
+$ bash commands.sh cleanup
+
+==================================================================
+Dọn dẹp tài nguyên của bài 4
+==================================================================
+$ docker rm -f app-container db-server
+app-container
+db-server
+$ docker volume rm db-data
+db-data
+$ docker network rm app-net
+app-net
+Đã xóa (nếu tồn tại): container app-container, db-server; volume db-data; network app-net
+Giữ lại image backend-api:1.0 và postgres:15-alpine
+$ docker ps -a --filter name=db-server --filter name=app-container
+CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
+$ docker network ls | grep app-net
+(không còn)
+$ docker volume ls | grep db-data
+(không còn)
+$ docker images | grep -E "backend-api|postgres"
+backend-api:1.0                   1b03ec422c92       99.6MB         24.8MB        
+postgres:15-alpine                f7d23353e1b1        417MB          116MB        
+
+##################################################################
+# PHẦN 5: Lỗi thật gặp trong lần chạy thử đầu tiên (đã sửa trong commands.sh)
+##################################################################
+$ docker build -t backend-api:1.0 /d/Rikkei/DevOps/Session10/_demo/bai4/backend   # có MSYS_NO_PATHCONV=1, truyền đường dẫn kiểu Git Bash cho docker.exe
+ERROR: failed to build: unable to prepare context: path "/d/Rikkei/DevOps/Session10/_demo/bai4/backend" not found
+
+$ docker inspect db-server --format '{{.NetworkSettings.Networks.app-net.IPAddress}}'   # tên network có dấu gạch ngang
+template parsing error: template: :1: bad character U+002D '-'
